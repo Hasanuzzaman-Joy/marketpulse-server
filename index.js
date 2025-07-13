@@ -23,8 +23,23 @@ async function run() {
     try {
         // await client.connect();
 
+        const usersCollection = client.db("usersDB").collection("users");
+
         app.get("/", (req, res) => {
             res.send("Server is running")
+        })
+
+        app.post("/register", async (req, res) => {
+            const { name, email, photo } = req.body;
+            const users = {
+                name,
+                email,
+                photo,
+                createdAt: new Date(),
+                lastSignIn: new Date()
+            }
+            console.log(users)
+            const result = await usersCollection.insertOne(users);
         })
 
         // Send a ping to confirm a successful connection
