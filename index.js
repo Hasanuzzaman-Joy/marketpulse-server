@@ -4,6 +4,7 @@ const app = express();
 const port = process.env.PORT || 5000;
 const cors = require("cors")
 const { MongoClient, ServerApiVersion } = require('mongodb');
+const jwt = require("jsonwebtoken");
 
 // Middlewares
 app.use(cors());
@@ -29,6 +30,7 @@ async function run() {
             res.send("Server is running")
         })
 
+        // Sending users to DB
         app.post("/register", async (req, res) => {
             const { name, email, photo } = req.body;
             const users = {
@@ -43,6 +45,14 @@ async function run() {
             res.send(result)
         })
 
+        // JWT Implementation
+        app.post("/jwt", async(req,res) => {
+            const {email} = req.body;
+            const token = jwt.sign({email}, process.env.JWT_SECRET_KEY, {expiresIn:"1hr"});
+            res.send({token});
+        })
+
+        // Updating Users
         app.patch("/register", async (req, res) => {
             try {
                 const { email, lastSignedIn } = req.body;
