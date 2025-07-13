@@ -35,12 +35,35 @@ async function run() {
                 name,
                 email,
                 photo,
+                role: "user",
                 createdAt: new Date(),
-                lastSignIn: new Date()
+                lastSignedIn: new Date()
             }
-            console.log(users)
             const result = await usersCollection.insertOne(users);
+            res.send(result)
         })
+
+        app.patch("/register", async (req, res) => {
+            try {
+                const { email, lastSignedIn } = req.body;
+                if (!email || !lastSignedIn) {
+                    return res.status(400).send({ error: "Email and lastSignedIn are required" });
+                }
+
+                const filter = { email };
+                const updateDoc = { $set: { lastSignedIn: new Date(lastSignedIn) } };
+                const result = await usersCollection.updateOne(filter, updateDoc);
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: "User not found" });
+                }
+
+                res.send({ message: "Last signed in updated successfully", result });
+            } catch (error) {
+                console.error("Error updating lastSignedIn:", error);
+                res.status(500).send({ error: "Internal Server Error" });
+            }
+        });
 
         // Send a ping to confirm a successful connection
         // await client.db("admin").command({ ping: 1 });
