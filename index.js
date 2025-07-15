@@ -54,10 +54,34 @@ async function run() {
             next();
         };
 
+        const verifyRole = (expectedRole) => {
+            return async (req, res, next) => {
+                try {
+                    const email = req?.decoded?.email;
+                    if (!email) {
+                        return res.status(401).json({ message: "Unauthorized: No email found" });
+                    }
+
+                    const user = await usersCollection.findOne(
+                        { email },
+                        { projection: { role: 1 } }
+                    );
+
+                    if (user?.role !== expectedRole) {
+                        return res.status(403).json({ message: `Forbidden: ${expectedRole}s only` });
+                    }
+
+                    next();
+                } catch (error) {
+                    res.status(500).json({ message: "Server error" });
+                }
+            };
+        };
+
         // =============================GET API=============================
 
         // GET all users
-        app.get("/users", verifyToken, verifyTokenEmail, async (req, res) => {
+        app.get("/users", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
             try {
                 const users = await usersCollection.find().toArray();
                 res.send(users);
@@ -116,7 +140,7 @@ async function run() {
         });
 
         // PATCH: Update a user's role
-        app.patch("/users/updateRole/:id", verifyToken, verifyTokenEmail, async (req, res) => {
+        app.patch("/users/updateRole/:id", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
             const userId = req.params.id;
             const { role } = req.body;
 
