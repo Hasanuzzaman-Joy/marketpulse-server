@@ -26,10 +26,38 @@ async function run() {
 
         const usersCollection = client.db("usersDB").collection("users");
 
+        // =============================CUSTOM MIDDLEWARES=============================
+        const verifyToken = async (req, res, next) => {
+            const authHeader = req.headers.authorization;
+
+            if (!authHeader || !authHeader.startsWith("Bearer ")) {
+                return res.status(401).send({ message: "Unauthorized: No token provided" });
+            }
+
+            const token = authHeader.split(" ")[1].trim();
+
+            jwt.verify(token, process.env.JWT_SECRET_KEY, (err, decoded) => {
+                if (err) {
+                    return res.status(403).send({ message: "Forbidden: Invalid token" });
+                }
+                req.decoded = decoded;
+                next();
+            });
+        }
+
+        const verifyTokenEmail = async (req, res, next) => {
+            if (req?.query?.email !== req.decoded?.email) {
+                return res
+                    .status(403)
+                    .json({ message: "Forbidden: Email does not match token" });
+            }
+            next();
+        };
+
         // =============================GET API=============================
 
         // GET all users
-        app.get("/users", async (req, res) => {
+        app.get("/users", verifyToken, verifyTokenEmail, async (req, res) => {
             try {
                 const users = await usersCollection.find().toArray();
                 res.send(users);
@@ -43,7 +71,7 @@ async function run() {
         // JWT Implementation
         app.post("/jwt", async (req, res) => {
             const { email } = req.body;
-            const token = jwt.sign({ email }, process.env.JWT_SECRET_KEY, { expiresIn: "1hr" });
+            const token = jwt.sign({ email }, process.env.JWT_SECRET_KEY);
             res.send({ token });
         })
 
@@ -88,7 +116,7 @@ async function run() {
         });
 
         // PATCH: Update a user's role
-        app.patch("/users/updateRole/:id", async (req, res) => {
+        app.patch("/users/updateRole/:id", verifyToken, verifyTokenEmail, async (req, res) => {
             const userId = req.params.id;
             const { role } = req.body;
 
@@ -107,7 +135,7 @@ async function run() {
                 res.status(500).send({ message: "Failed to update role" });
             }
         });
-        
+
         // =============================DELETE API=============================
 
 
