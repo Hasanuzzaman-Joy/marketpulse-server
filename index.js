@@ -3,7 +3,7 @@ const express = require("express");
 const app = express();
 const port = process.env.PORT || 5000;
 const cors = require("cors")
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require("jsonwebtoken");
 
 // Middlewares
@@ -26,8 +26,25 @@ async function run() {
 
         const usersCollection = client.db("usersDB").collection("users");
 
-        app.get("/", (req, res) => {
-            res.send("Server is running")
+        // =============================GET API=============================
+
+        // GET all users
+        app.get("/users", async (req, res) => {
+            try {
+                const users = await usersCollection.find().toArray();
+                res.send(users);
+            } catch (err) {
+                res.status(500).send({ message: "Failed to fetch users." });
+            }
+        });
+
+        // =============================POST API=============================
+
+        // JWT Implementation
+        app.post("/jwt", async (req, res) => {
+            const { email } = req.body;
+            const token = jwt.sign({ email }, process.env.JWT_SECRET_KEY, { expiresIn: "1hr" });
+            res.send({ token });
         })
 
         // Sending users to DB
@@ -45,14 +62,9 @@ async function run() {
             res.send(result)
         })
 
-        // JWT Implementation
-        app.post("/jwt", async(req,res) => {
-            const {email} = req.body;
-            const token = jwt.sign({email}, process.env.JWT_SECRET_KEY, {expiresIn:"1hr"});
-            res.send({token});
-        })
+        // =============================UPDATE API=============================
 
-        // Updating Users
+        // Updating Users Signin Time
         app.patch("/register", async (req, res) => {
             try {
                 const { email, lastSignedIn } = req.body;
@@ -74,6 +86,30 @@ async function run() {
                 res.status(500).send({ error: "Internal Server Error" });
             }
         });
+
+        // PATCH: Update a user's role
+        app.patch("/users/updateRole/:id", async (req, res) => {
+            const userId = req.params.id;
+            const { role } = req.body;
+
+            if (!["user", "vendor", "admin"].includes(role)) {
+                return res.status(400).send({ message: "Invalid role" });
+            }
+
+            try {
+                const result = await usersCollection.updateOne(
+                    { _id: new ObjectId(userId) },
+                    { $set: { role } }
+                );
+                res.send(result);
+            }
+            catch (err) {
+                res.status(500).send({ message: "Failed to update role" });
+            }
+        });
+        
+        // =============================DELETE API=============================
+
 
         // Send a ping to confirm a successful connection
         // await client.db("admin").command({ ping: 1 });
