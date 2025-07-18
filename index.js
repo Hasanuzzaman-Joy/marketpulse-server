@@ -26,7 +26,7 @@ async function run() {
 
         const usersCollection = client.db("usersDB").collection("users");
         const vendorsCollection = client.db("usersDB").collection("vendorApplications");
-        const productCollections = client.db("userDB").collection("products");
+        const productCollections = client.db("usersDB").collection("products");
 
         // =============================CUSTOM MIDDLEWARES=============================
         const verifyToken = async (req, res, next) => {
@@ -149,34 +149,10 @@ async function run() {
         // Apply to become a vendor
         app.post("/vendors/apply", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
             try {
-                const {
-                    name,
-                    email,
-                    photo,
-                    documentId,
-                    location,
-                    marketName,
-                    description,
-                } = req.body;
+                const vendorData = req.body;
+                const data = {...vendorData, vendor_status: "pending", createdAt: new Date(), }
 
-                // Validation (basic)
-                if (!name || !email || !photo || !documentId || !location || !marketName || !description) {
-                    return res.status(400).json({ message: "All fields are required" });
-                }
-
-                const newVendor = {
-                    name,
-                    email,
-                    photo,
-                    documentId,
-                    location,
-                    marketName,
-                    description,
-                    vendor_status: "pending",
-                    createdAt: new Date(),
-                };
-
-                const result = await vendorsCollection.insertOne(newVendor);
+                const result = await vendorsCollection.insertOne(data);
                 res.status(201).send(result);
             } catch (err) {
                 res.status(403).json({ message: "Server error. Please try again later." });
@@ -186,41 +162,11 @@ async function run() {
         // Add product API
         app.post("/add-products", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
             try {
-                const {
-                    vendorEmail,
-                    vendorName,
-                    marketName,
-                    date,
-                    marketDescription,
-                    itemName,
-                    status = "pending",
-                    image,
-                    pricePerUnit,
-                    prices,
-                    itemDescription,
-                } = req.body;;
+                const productData = req.body;
+                const data = { ...productData, createdAt: new Date(), updatedAt: new Date()}
 
-                const productDoc = {
-                    vendorEmail,
-                    vendorName,
-                    marketName,
-                    date: new Date(date),
-                    marketDescription,
-                    itemName,
-                    status,
-                    image,
-                    pricePerUnit,
-                    prices: prices.map((p) => ({
-                        date: new Date(p.date),
-                        price: p.price,
-                    })),
-                    itemDescription,
-                    createdAt: new Date(),
-                    updatedAt: new Date(),
-                };
-
-                const result = await productCollections.insertOne(productDoc);
-                res.status(201).json({ message: "Product created", productId: result.insertedId });
+                const result = await productCollections.insertOne(data);
+                res.status(201).send(result);
             }
             catch (error) {
                 res.status(500).json({ message: "Server error" });
