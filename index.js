@@ -27,6 +27,7 @@ async function run() {
         const usersCollection = client.db("usersDB").collection("users");
         const vendorsCollection = client.db("usersDB").collection("vendorApplications");
         const productCollections = client.db("usersDB").collection("products");
+        const adCollections = client.db("usersDB").collection("ad");
 
         // =============================CUSTOM MIDDLEWARES=============================
         const verifyToken = async (req, res, next) => {
@@ -150,7 +151,7 @@ async function run() {
         app.post("/vendors/apply", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
             try {
                 const vendorData = req.body;
-                const data = {...vendorData, vendor_status: "pending", createdAt: new Date(), }
+                const data = { ...vendorData, vendor_status: "pending", createdAt: new Date(), }
 
                 const result = await vendorsCollection.insertOne(data);
                 res.status(201).send(result);
@@ -159,17 +160,39 @@ async function run() {
             }
         });
 
-        // Add product API
+        // Add Products API
         app.post("/add-products", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
             try {
                 const productData = req.body;
-                const data = { ...productData, createdAt: new Date(), updatedAt: new Date()}
+                const data = { ...productData, createdAt: new Date(), updatedAt: new Date() }
 
                 const result = await productCollections.insertOne(data);
                 res.status(201).send(result);
             }
             catch (error) {
                 res.status(500).json({ message: "Server error" });
+            }
+        });
+
+        // Add Advertisement API
+        app.post("/advertisements", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+            try {
+                const formData = req.body;
+
+                const data = {
+                    ...formData,
+                    status: "pending",
+                    createdAt: new Date()
+                };
+
+                console.log(data)
+
+                const result = await adCollections.insertOne(data)
+
+                res.status(201).send(result);
+            } catch (error) {
+                console.error("Error saving vendor:", error);
+                res.status(500).send({ error: "Something went wrong" });
             }
         });
 
