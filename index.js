@@ -118,7 +118,6 @@ async function run() {
 
                 res.send(user);
             } catch (err) {
-                console.error("Error fetching user role:", err);
                 res.status(500).json({ error: "Server error" });
             }
         });
@@ -153,7 +152,7 @@ async function run() {
         // GET all advertisements by vendor
         app.get("/my-advertisements", verifyToken, verifyRole("vendor"), async (req, res) => {
             const email = req.query.email;
-            const query = { adCreatedBy : email };
+            const query = { adCreatedBy: email };
 
             try {
                 const advertisements = await adCollections
@@ -228,12 +227,9 @@ async function run() {
                     createdAt: new Date()
                 };
 
-                console.log(data)
-
                 const result = await adCollections.insertOne(data)
                 res.status(201).send(result);
             } catch (error) {
-                console.error("Error saving vendor:", error);
                 res.status(500).send({ error: "Something went wrong" });
             }
         });
@@ -258,7 +254,6 @@ async function run() {
 
                 res.send({ message: "Last signed in updated successfully", result });
             } catch (error) {
-                console.error("Error updating lastSignedIn:", error);
                 res.status(500).send({ error: "Internal Server Error" });
             }
         });
@@ -285,12 +280,7 @@ async function run() {
         });
 
         //Update a product API
-        app.patch(
-            "/modify-product/:id",
-            verifyToken,
-            verifyTokenEmail,
-            verifyRole("vendor"),
-            async (req, res) => {
+        app.patch( "/modify-product/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
                 const productsData = req.body;
                 const id = req.params.id;
 
@@ -308,11 +298,36 @@ async function run() {
 
                     res.send(result);
                 } catch (err) {
-                    console.error(err);
                     res.status(500).json({ error: "Failed to update product" });
                 }
             }
         );
+
+        //Update a advertisement API
+        app.patch("/update-ad/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+            const adId = req.params.id;
+            const updateData = req.body;
+
+            try {
+                const filter = { _id: new ObjectId(adId) };
+
+                const updateDoc = {
+                    $set: {
+                        ...updateData,
+                        updatedAt: new Date(), 
+                    },
+                };
+
+                const result = await adCollections.updateOne(filter, updateDoc);
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({ error: "Advertisement not found" });
+                }
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to update advertisement" });
+            }
+        });
 
         // =============================DELETE API=============================
 
@@ -332,7 +347,6 @@ async function run() {
         app.delete("/delete-ad/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
             try {
                 const id = req.params.id;
-                console.log(id)
                 const filter = { _id: new ObjectId(id) };
                 const result = await adCollections.deleteOne(filter);
                 res.send(result);
