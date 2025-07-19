@@ -123,6 +123,49 @@ async function run() {
             }
         });
 
+        // GET all products by vendor
+        app.get("/my-products", verifyToken, verifyToken, verifyRole("vendor"), async (req, res) => {
+            const email = req.query.email;
+            const query = { vendorEmail: email }
+            try {
+                const products = await productCollections
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(products);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch products" });
+            }
+        });
+
+        // GET single product by vendor
+        app.get("/single-product/:id", verifyToken, verifyToken, verifyRole("vendor"), async (req, res) => {
+            try {
+                const id = req.params.id;
+                const filter = { _id: new ObjectId(id) };
+                const products = await productCollections.findOne(filter);
+                res.send(products);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch the product" });
+            }
+        })
+
+        // GET all advertisements by vendor
+        app.get("/my-advertisements", verifyToken, verifyRole("vendor"), async (req, res) => {
+            const email = req.query.email;
+            const query = { adCreatedBy : email };
+
+            try {
+                const advertisements = await adCollections
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(advertisements);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch advertisements" });
+            }
+        });
+
         // =============================POST API=============================
 
         // JWT Implementation
@@ -188,7 +231,6 @@ async function run() {
                 console.log(data)
 
                 const result = await adCollections.insertOne(data)
-
                 res.status(201).send(result);
             } catch (error) {
                 console.error("Error saving vendor:", error);
@@ -242,8 +284,62 @@ async function run() {
             }
         });
 
+        //Update a product API
+        app.patch(
+            "/modify-product/:id",
+            verifyToken,
+            verifyTokenEmail,
+            verifyRole("vendor"),
+            async (req, res) => {
+                const productsData = req.body;
+                const id = req.params.id;
+
+                const filter = { _id: new ObjectId(id) };
+                const updatedDoc = {
+                    $set: { ...productsData },
+                };
+
+                try {
+                    const result = await productCollections.updateOne(filter, updatedDoc);
+
+                    if (result.modifiedCount === 0) {
+                        return res.status(404).json({ message: "Update failed" });
+                    }
+
+                    res.send(result);
+                } catch (err) {
+                    console.error(err);
+                    res.status(500).json({ error: "Failed to update product" });
+                }
+            }
+        );
+
         // =============================DELETE API=============================
 
+        // DELETE a product
+        app.delete("/delete-products/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+            try {
+                const id = req.params.id;
+                const filter = { _id: new ObjectId(id) };
+                const result = await productCollections.deleteOne(filter);
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to delete product" });
+            }
+        });
+
+        // DELETE an advertisement
+        app.delete("/delete-ad/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+            try {
+                const id = req.params.id;
+                console.log(id)
+                const filter = { _id: new ObjectId(id) };
+                const result = await adCollections.deleteOne(filter);
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to delete product" });
+            }
+        });
 
         // Send a ping to confirm a successful connection
         // await client.db("admin").command({ ping: 1 });
