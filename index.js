@@ -57,7 +57,7 @@ async function run() {
             next();
         };
 
-        const verifyRole = (expectedRole) => {
+        const verifyRole = (...expectedRoles) => {
             return async (req, res, next) => {
                 try {
                     const email = req?.decoded?.email;
@@ -70,8 +70,8 @@ async function run() {
                         { projection: { role: 1 } }
                     );
 
-                    if (user?.role !== expectedRole) {
-                        return res.status(403).json({ message: `Forbidden: ${expectedRole}s only` });
+                    if (!expectedRoles.includes(user?.role)) {
+                        return res.status(403).json({ message: `Forbidden: ${expectedRoles.join(", ")} only` });
                     }
 
                     next();
@@ -94,7 +94,7 @@ async function run() {
         });
 
         // GET user role
-        app.get("/usersRole", verifyToken, verifyTokenEmail, async (req, res) => {
+        app.get("/usersRole", verifyToken, verifyTokenEmail, verifyRole("admin", "vendor", "user"), async (req, res) => {
             const email = req.query.email;
 
             if (!email) {
@@ -122,6 +122,19 @@ async function run() {
             }
         });
 
+        // GET all products for admin
+        app.get("/all-products", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            try {
+                const products = await productCollections
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(products);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch products" });
+            }
+        });
+
         // GET all products by vendor
         app.get("/my-products", verifyToken, verifyToken, verifyRole("vendor"), async (req, res) => {
             const email = req.query.email;
@@ -137,8 +150,8 @@ async function run() {
             }
         });
 
-        // GET single product by vendor
-        app.get("/single-product/:id", verifyToken, verifyToken, verifyRole("vendor"), async (req, res) => {
+        // GET single product 
+        app.get("/single-product/:id", verifyToken, verifyRole("vendor", "admin"), async (req, res) => {
             try {
                 const id = req.params.id;
                 const filter = { _id: new ObjectId(id) };
@@ -149,10 +162,16 @@ async function run() {
             }
         })
 
-        // GET all advertisements by vendor
-        app.get("/my-advertisements", verifyToken, verifyRole("vendor"), async (req, res) => {
+        // GET advertisements by vendor
+        app.get("/my-advertisements", verifyToken, verifyRole("vendor", "admin"), async (req, res) => {
             const email = req.query.email;
-            const query = { adCreatedBy: email };
+
+            let query = {}
+
+            if (email) {
+                query = { adCreatedBy: email };
+            }
+
 
             try {
                 const advertisements = await adCollections
@@ -258,7 +277,7 @@ async function run() {
             }
         });
 
-        // PATCH: Update a user's role
+        // Update a user's role
         app.patch("/users/updateRole/:id", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
             const userId = req.params.id;
             const { role } = req.body;
@@ -279,28 +298,106 @@ async function run() {
             }
         });
 
-        //Update a product API
-        app.patch( "/modify-product/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
-                const productsData = req.body;
-                const id = req.params.id;
+        // Product approval API
+        app.patch("/approve-product/:productId", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            const { productId } = req.params;
+            const { status } = req.body;
 
-                const filter = { _id: new ObjectId(id) };
-                const updatedDoc = {
-                    $set: { ...productsData },
-                };
-
-                try {
-                    const result = await productCollections.updateOne(filter, updatedDoc);
-
-                    if (result.modifiedCount === 0) {
-                        return res.status(404).json({ message: "Update failed" });
-                    }
-
-                    res.send(result);
-                } catch (err) {
-                    res.status(500).json({ error: "Failed to update product" });
-                }
+            if (!status) {
+                return res.status(400).json({ error: "Status is required" });
             }
+
+            try {
+                const filter = { _id: new ObjectId(productId) };
+
+                let updatedDoc = {};
+
+                if (status === "approved") {
+                    updatedDoc = {
+                        $set: { status },
+                        $unset: {
+                            rejectionFeedback: "",
+                            rejectionReason: ""
+                        }
+                    }
+                }
+                else {
+                    updatedDoc = {
+                        $set: { status }
+                    }
+                }
+
+                const updatedProduct = await productCollections.updateOne(filter, updatedDoc);
+                if (!updatedProduct) {
+                    return res.status(404).json({ error: "Product not found" });
+                }
+                res.send(updatedProduct)
+            } catch (error) {
+                res.status(500).json({ error: "Internal server error" });
+            }
+        });
+
+        // Ad approval API
+        app.patch("/approve-ad/:adId", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            const { adId } = req.params;
+            const { status } = req.body;
+
+            if (!status) {
+                return res.status(400).json({ error: "Status is required" });
+            }
+
+            try {
+                const filter = { _id: new ObjectId(adId) };
+
+                let updatedDoc = {};
+
+                if (status === "approved") {
+                    updatedDoc = {
+                        $set: { status },
+                        $unset: {
+                            rejectionFeedback: "",
+                            rejectionReason: ""
+                        }
+                    }
+                }
+                else {
+                    updatedDoc = {
+                        $set: { status }
+                    }
+                }
+
+                const updatedProduct = await adCollections.updateOne(filter, updatedDoc);
+                if (!updatedProduct) {
+                    return res.status(404).json({ error: "Advertisement not found" });
+                }
+                res.send(updatedProduct)
+            } catch (error) {
+                res.status(500).json({ error: "Internal server error" });
+            }
+        });
+
+        //Update a product API
+        app.patch("/modify-product/:id", verifyToken, verifyTokenEmail, verifyRole("vendor", "admin"), async (req, res) => {
+            const productsData = req.body;
+            const id = req.params.id;
+
+            const filter = { _id: new ObjectId(id) };
+            const updatedDoc = {
+                $set: { ...productsData },
+            };
+
+            try {
+                const result = await productCollections.updateOne(filter, updatedDoc);
+
+                if (result.modifiedCount === 0) {
+                    return res.status(404).json({ message: "Update failed" });
+                }
+
+                res.send(result);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to update product" });
+            }
+        }
         );
 
         //Update a advertisement API
@@ -314,7 +411,7 @@ async function run() {
                 const updateDoc = {
                     $set: {
                         ...updateData,
-                        updatedAt: new Date(), 
+                        updatedAt: new Date(),
                     },
                 };
 
@@ -329,10 +426,64 @@ async function run() {
             }
         });
 
+        // Reject a project API
+        app.patch("/reject-product/:id", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { reason, feedback } = req.body;
+
+                const result = await productCollections.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            status: "rejected",
+                            rejectionReason: reason,
+                            rejectionFeedback: feedback,
+                        },
+                    }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send(result);
+                } else {
+                    res.status(400).send({ message: "Update failed" });
+                }
+            } catch (error) {
+                res.status(500).send({ message: "Server error", error: error.message });
+            }
+        });
+
+        // Reject a advertisement API
+        app.patch("/reject-advertisement/:id", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { reason, feedback } = req.body;
+
+                const result = await adCollections.updateOne(
+                    { _id: new ObjectId(id) },
+                    {
+                        $set: {
+                            status: "rejected",
+                            rejectionReason: reason,
+                            rejectionFeedback: feedback,
+                        },
+                    }
+                );
+
+                if (result.modifiedCount > 0) {
+                    res.send(result);
+                } else {
+                    res.status(400).send({ message: "Update failed" });
+                }
+            } catch (error) {
+                res.status(500).send({ message: "Server error", error: error.message });
+            }
+        });
+
         // =============================DELETE API=============================
 
         // DELETE a product
-        app.delete("/delete-products/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+        app.delete("/delete-products/:id", verifyToken, verifyTokenEmail, verifyRole("vendor", "admin"), async (req, res) => {
             try {
                 const id = req.params.id;
                 const filter = { _id: new ObjectId(id) };
@@ -344,7 +495,7 @@ async function run() {
         });
 
         // DELETE an advertisement
-        app.delete("/delete-ad/:id", verifyToken, verifyTokenEmail, verifyRole("vendor"), async (req, res) => {
+        app.delete("/delete-ad/:id", verifyToken, verifyTokenEmail, verifyRole("vendor", "admin"), async (req, res) => {
             try {
                 const id = req.params.id;
                 const filter = { _id: new ObjectId(id) };
