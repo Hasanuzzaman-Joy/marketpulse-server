@@ -28,6 +28,7 @@ async function run() {
         const vendorsCollection = client.db("usersDB").collection("vendorApplications");
         const productCollections = client.db("usersDB").collection("products");
         const adCollections = client.db("usersDB").collection("ad");
+        const wishCollections = client.db("usersDB").collection("wishLists");
 
         // =============================CUSTOM MIDDLEWARES=============================
         const verifyToken = async (req, res, next) => {
@@ -123,7 +124,7 @@ async function run() {
         });
 
         // GET all products for admin
-        app.get("/all-products", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+        app.get("/all-products", verifyToken, verifyTokenEmail, verifyRole("admin", "user"), async (req, res) => {
             try {
                 const products = await productCollections
                     .find({})
@@ -184,6 +185,28 @@ async function run() {
             }
         });
 
+        // Wishlist get API
+        app.get("/get-wishlist", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
+            try {
+                const { email } = req.query;
+
+                if (!email) {
+                    return res.status(400).json({ message: "Email is required." });
+                }
+
+                // Get all wishlist items for the user
+                const wishlistItems = await wishCollections.find({ email }).toArray();
+
+                // Extract all product IDs
+                const productIds = wishlistItems.map(item => new ObjectId(item.productId));
+
+                // Find all products that match those IDs
+                const products = await productCollections.find({ _id: { $in: productIds } }).toArray();
+                res.status(200).json(products);
+            } catch (error) {
+                res.status(500).json({ message: "Server error." });
+            }
+        });
         // =============================POST API=============================
 
         // JWT Implementation
@@ -253,6 +276,30 @@ async function run() {
             }
         });
 
+        // Wishlist post API
+        app.post("/wishlist", async (req, res) => {
+            try {
+                const { productId } = req.body;
+                const email = req.query.email;
+
+                if (!email || !productId) {
+                    return res.status(400).json({ message: "Email and productId are required." });
+                }
+
+                // Check if this product already exists in the user's wishlist
+                const alreadyExists = await wishCollections.findOne({ email, productId });
+
+                if (alreadyExists) {
+                    return res.status(409).json({ message: "Already added to wishlist." });
+                }
+
+                const result = await wishCollections.insertOne({ email, productId, createdAt: new Date() });
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).json({ message: "Server error" });
+            }
+        });
         // =============================UPDATE API=============================
 
         // Updating Users Signin Time
@@ -503,6 +550,21 @@ async function run() {
                 res.send(result);
             } catch (err) {
                 res.status(500).json({ error: "Failed to delete product" });
+            }
+        });
+
+        app.delete("/delete-wishlist/:id", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
+            try {
+                const wishlistId = req.params.id;
+                const email = req.query.email;
+
+                const query = {productId : wishlistId}
+
+                // Delete the wishlist item
+                const result = await wishCollections.deleteOne(query);
+                res.send(result);
+            } catch (error) {
+                res.status(500).json({ message: "Server error." });
             }
         });
 
