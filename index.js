@@ -151,8 +151,36 @@ async function run() {
             }
         });
 
+        // GET all approved products
+        app.get("/approved-products", async (req, res) => {
+
+            const page = parseInt(req.query.page) || 1;
+            const limit = parseInt(req.query.limit) || 9;
+
+            const skip = (page - 1) * limit;
+
+            const query = { status: "approved" };
+            try {
+                const products = await productCollections
+                    .find(query)
+                    .skip(skip)
+                    .limit(limit)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                const total = await productCollections.estimatedDocumentCount();
+
+                res.json({
+                    products,
+                    totalPages: Math.ceil(total / limit)
+                })
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch products" });
+            }
+        });
+
         // GET single product 
-        app.get("/single-product/:id", verifyToken, verifyRole("vendor", "admin"), async (req, res) => {
+        app.get("/single-product/:id", verifyToken, verifyRole("vendor", "admin", "user"), async (req, res) => {
             try {
                 const id = req.params.id;
                 const filter = { _id: new ObjectId(id) };
@@ -558,7 +586,7 @@ async function run() {
                 const wishlistId = req.params.id;
                 const email = req.query.email;
 
-                const query = {productId : wishlistId}
+                const query = { productId: wishlistId }
 
                 // Delete the wishlist item
                 const result = await wishCollections.deleteOne(query);
