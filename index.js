@@ -333,6 +333,16 @@ async function run() {
             }
         });
 
+        // Get Ads
+        app.get("/get-ads", async (req, res) => {
+            try {
+                const ads = await adCollections.find().toArray();
+                res.json(ads);
+            } catch (error) {
+                res.status(500).json({ message: "Internal Server Error" });
+            }
+        });
+
         // =============================POST API=============================
 
         // JWT Implementation
