@@ -5,6 +5,7 @@ const port = process.env.PORT || 5000;
 const cors = require("cors")
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require("jsonwebtoken");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
 // Middlewares
 app.use(cors());
@@ -29,6 +30,8 @@ async function run() {
         const productCollections = client.db("usersDB").collection("products");
         const adCollections = client.db("usersDB").collection("ad");
         const wishCollections = client.db("usersDB").collection("wishLists");
+        const paymentCollection = client.db("usersDB").collection("payments");
+        const commentsCollection = client.db("usersDB").collection("comments");
 
         // =============================CUSTOM MIDDLEWARES=============================
         const verifyToken = async (req, res, next) => {
@@ -235,6 +238,101 @@ async function run() {
                 res.status(500).json({ message: "Server error." });
             }
         });
+
+        // GET Comment API
+        app.get("/comments", verifyToken, verifyTokenEmail, async (req, res) => {
+            try {
+                const { productId } = req.query;
+                if (!productId) return res.status(400).json({ error: "Missing productId" });
+
+                const comments = await commentsCollection
+                    .find({ productId })
+                    .sort({ date: -1 })
+                    .toArray();
+
+                res.json(comments);
+            } catch (error) {
+                console.error("GET /comments error:", error);
+                res.status(500).json({ error: "Internal Server Error" });
+            }
+        });
+
+        // Get orders for admin
+        app.get("/admin/orders", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
+            try {
+                const payments = await paymentCollection.find({ status: "paid" }).toArray();
+
+                // Step 2: For each payment, find the product info by productId
+                const orders = await Promise.all(payments.map(async (payment) => {
+                    // Convert productId to ObjectId if needed
+                    const productObjectId = typeof payment.productId === "string" ? new ObjectId(payment.productId) : payment.productId;
+
+                    const product = await productCollections.findOne({ _id: productObjectId });
+
+                    return {
+                        _id: payment._id,
+                        price: payment.price,
+                        buyerName: payment.buyerName,
+                        buyerEmail: payment.buyerEmail,
+                        status: payment.status,
+                        paidAt: payment.paidAt,
+                        productId: payment.productId,
+                        productName: product?.itemName || "Unknown Product",
+                        vendorEmail: product?.vendorEmail || "N/A",
+                        vendorName: product?.vendorName || "N/A",
+                        productImage: product?.image || "",
+                    };
+                }));
+
+                res.json(orders);
+            } catch (error) {
+                console.error(error);
+                res.status(500).json({ error: "Internal Server Error" });
+            }
+        });
+
+
+        // Get order for users
+        app.get("/orders", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
+            try {
+                const email = req.query.email;
+
+                const payments = await paymentCollection.find({
+                    buyerEmail: email,
+                    status: "paid"
+                }).toArray();
+
+                // Fetch product data for each payment to send productName & marketName etc
+                const ordersWithProduct = await Promise.all(
+                    payments.map(async (payment) => {
+                        let product;
+                        try {
+                            product = await productCollections.findOne({ _id: new ObjectId(payment.productId) });
+                        } catch (err) {
+                            console.error("Invalid productId:", payment.productId);
+                        }
+
+                        return {
+                            _id: payment._id,
+                            price: payment.price,
+                            buyerName: payment.buyerName,
+                            email: payment.email,
+                            status: payment.status,
+                            paidAt: payment.paidAt,
+                            productName: product?.itemName || "Unknown",
+                            marketName: product?.marketName || "Unknown",
+                            productImage: product?.image || "N/A"
+                        };
+                    })
+                );
+
+                res.json(ordersWithProduct);
+            } catch (error) {
+                console.error("Error fetching orders:", error);
+                res.status(500).json({ error: "Internal Server Error" });
+            }
+        });
+
         // =============================POST API=============================
 
         // JWT Implementation
@@ -328,6 +426,83 @@ async function run() {
                 res.status(500).json({ message: "Server error" });
             }
         });
+
+        // Payment Intent
+        app.post('/create-payment-intent', verifyToken, async (req, res) => {
+            try {
+                const { productId, price, buyerName, buyerEmail } = req.body;
+
+                if (!price || isNaN(price)) {
+                    return res.status(400).json({ error: 'Invalid price' });
+                }
+
+                // Create Stripe PaymentIntent
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: Math.round(price * 100),
+                    currency: 'usd',
+                    receipt_email: buyerEmail,
+                    metadata: {
+                        productId,
+                        buyerName,
+                    },
+                });
+
+                // Save payment info to MongoDB
+                await paymentCollection.insertOne({
+                    productId,
+                    price,
+                    buyerName,
+                    buyerEmail,
+                    status: "paid",
+                    paidAt: new Date(),
+                });
+
+                // Return client secret for front-end payment confirmation
+                res.json(paymentIntent.client_secret);
+
+            } catch (error) {
+                console.error('Payment Intent Error:', error);
+                res.status(500).json({ error: 'Internal Server Error' });
+            }
+        });
+
+        // POST Comment API
+        app.post("/comments", verifyToken, verifyTokenEmail, async (req, res) => {
+            try {
+                const { productId, userEmail, userName, rating, comment, date } = req.body;
+
+                if (
+                    !productId ||
+                    !userEmail ||
+                    !userName ||
+                    !rating ||
+                    !comment ||
+                    !date
+                ) {
+                    return res.status(400).json({ error: "Missing required fields" });
+                }
+
+                const newComment = {
+                    productId,
+                    userEmail,
+                    userName,
+                    rating,
+                    comment,
+                    date: new Date(date),
+                };
+
+                const result = await commentsCollection.insertOne(newComment);
+
+                res.status(201).json({
+                    _id: result.insertedId,
+                    ...newComment,
+                });
+            } catch (error) {
+                console.error("POST /comments error:", error);
+                res.status(500).json({ error: "Internal Server Error" });
+            }
+        });
+
         // =============================UPDATE API=============================
 
         // Updating Users Signin Time
