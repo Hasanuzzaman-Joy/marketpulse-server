@@ -176,7 +176,7 @@ async function run() {
         app.get("/approved-products", async (req, res) => {
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 9;
-            const sort = req.query.sort || 'newest';
+            const sort = req.query.sort || "newest";
             const date = req.query.date;
 
             const skip = (page - 1) * limit;
@@ -184,11 +184,7 @@ async function run() {
             const query = { status: "approved" };
 
             if (date) {
-                // Only match date
-                const start = new Date(date);
-                const end = new Date(date);
-                end.setDate(end.getDate() + 1);
-                query.createdAt = { $gte: start, $lt: end };
+                query.date = { $regex: `^${date}` };
             }
 
             let sortOptions = { createdAt: -1 };
@@ -210,7 +206,7 @@ async function run() {
 
                 res.json({
                     products,
-                    totalPages: Math.ceil(total / limit)
+                    totalPages: Math.ceil(total / limit),
                 });
             } catch (err) {
                 res.status(500).json({ error: "Failed to fetch products" });
