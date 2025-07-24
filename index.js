@@ -90,7 +90,12 @@ async function run() {
         // GET all users
         app.get("/users", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
             try {
-                const users = await usersCollection.find().toArray();
+                const search = req.query.search || "";
+                const query = search
+                    ? { email: { $regex: search, $options: "i" } }
+                    : {};
+
+                const users = await usersCollection.find(query).toArray();
                 res.send(users);
             } catch (err) {
                 res.status(500).send({ message: "Failed to fetch users." });
@@ -143,7 +148,7 @@ async function run() {
         app.get("/getAll-products", async (req, res) => {
             try {
                 const products = await productCollections
-                    .find()
+                    .find({ status: "approved" })
                     .sort({ createdAt: -1 })
                     .toArray();
                 res.send(products);
@@ -186,7 +191,7 @@ async function run() {
                 query.createdAt = { $gte: start, $lt: end };
             }
 
-            let sortOptions = { createdAt: -1 }; 
+            let sortOptions = { createdAt: -1 };
             if (sort === "asc") {
                 sortOptions = { pricePerUnit: 1 };
             } else if (sort === "desc") {
@@ -290,37 +295,52 @@ async function run() {
         // Get orders for admin
         app.get("/admin/orders", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
             try {
-                const payments = await paymentCollection.find({ status: "paid" }).toArray();
+                const page = parseInt(req.query.page) || 1;
+                const limit = parseInt(req.query.limit) || 7;
+                const skip = (page - 1) * limit;
 
-                // Step 2: For each payment, find the product info by productId
-                const orders = await Promise.all(payments.map(async (payment) => {
-                    // Convert productId to ObjectId if needed
-                    const productObjectId = typeof payment.productId === "string" ? new ObjectId(payment.productId) : payment.productId;
+                // Fetch paid payments with pagination
+                const payments = await paymentCollection
+                    .find({ status: "paid" })
+                    .skip(skip)
+                    .limit(limit)
+                    .toArray();
 
-                    const product = await productCollections.findOne({ _id: productObjectId });
+                const totalOrders = await paymentCollection.countDocuments({ status: "paid" });
 
-                    return {
-                        _id: payment._id,
-                        price: payment.price,
-                        buyerName: payment.buyerName,
-                        buyerEmail: payment.buyerEmail,
-                        status: payment.status,
-                        paidAt: payment.paidAt,
-                        productId: payment.productId,
-                        productName: product?.itemName || "Unknown Product",
-                        vendorEmail: product?.vendorEmail || "N/A",
-                        vendorName: product?.vendorName || "N/A",
-                        productImage: product?.image || "",
-                    };
-                }));
+                const orders = await Promise.all(
+                    payments.map(async (payment) => {
+                        const productObjectId =
+                            typeof payment.productId === "string"
+                                ? new ObjectId(payment.productId)
+                                : payment.productId;
 
-                res.json(orders);
+                        const product = await productCollections.findOne({ _id: productObjectId });
+
+                        return {
+                            _id: payment._id,
+                            price: payment.price,
+                            buyerName: payment.buyerName,
+                            buyerEmail: payment.buyerEmail,
+                            status: payment.status,
+                            paidAt: payment.paidAt,
+                            productId: payment.productId,
+                            productName: product?.itemName || "Unknown Product",
+                            vendorEmail: product?.vendorEmail || "N/A",
+                            vendorName: product?.vendorName || "N/A",
+                            productImage: product?.image || "",
+                        };
+                    })
+                );
+
+                res.json({
+                    orders,
+                    totalPages: Math.ceil(totalOrders / limit),
+                });
             } catch (error) {
-                console.error(error);
                 res.status(500).json({ error: "Internal Server Error" });
             }
         });
-
 
         // Get order for users
         app.get("/orders", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
@@ -339,11 +359,12 @@ async function run() {
                         try {
                             product = await productCollections.findOne({ _id: new ObjectId(payment.productId) });
                         } catch (err) {
-                            console.error("Invalid productId:", payment.productId);
+                            // console.error("Invalid productId:", payment.productId);
                         }
 
                         return {
                             _id: payment._id,
+                            product_id: payment.productId,
                             price: payment.price,
                             buyerName: payment.buyerName,
                             email: payment.email,
@@ -358,7 +379,6 @@ async function run() {
 
                 res.json(ordersWithProduct);
             } catch (error) {
-                console.error("Error fetching orders:", error);
                 res.status(500).json({ error: "Internal Server Error" });
             }
         });
@@ -366,7 +386,7 @@ async function run() {
         // Get Ads
         app.get("/get-ads", async (req, res) => {
             try {
-                const ads = await adCollections.find().toArray();
+                const ads = await adCollections.find({ status: "approved" }).toArray();
                 res.json(ads);
             } catch (error) {
                 res.status(500).json({ message: "Internal Server Error" });
