@@ -126,11 +126,24 @@ async function run() {
             }
         });
 
-        // GET all products for admin
+        // GET all products for admin and user
         app.get("/all-products", verifyToken, verifyTokenEmail, verifyRole("admin", "user"), async (req, res) => {
             try {
                 const products = await productCollections
                     .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+                res.send(products);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to fetch products" });
+            }
+        });
+
+        // GET all products
+        app.get("/getAll-products", async (req, res) => {
+            try {
+                const products = await productCollections
+                    .find()
                     .sort({ createdAt: -1 })
                     .toArray();
                 res.send(products);
@@ -156,27 +169,44 @@ async function run() {
 
         // GET all approved products
         app.get("/approved-products", async (req, res) => {
-
             const page = parseInt(req.query.page) || 1;
             const limit = parseInt(req.query.limit) || 9;
+            const sort = req.query.sort || 'newest';
+            const date = req.query.date;
 
             const skip = (page - 1) * limit;
 
             const query = { status: "approved" };
+
+            if (date) {
+                // Only match date
+                const start = new Date(date);
+                const end = new Date(date);
+                end.setDate(end.getDate() + 1);
+                query.createdAt = { $gte: start, $lt: end };
+            }
+
+            let sortOptions = { createdAt: -1 }; 
+            if (sort === "asc") {
+                sortOptions = { pricePerUnit: 1 };
+            } else if (sort === "desc") {
+                sortOptions = { pricePerUnit: -1 };
+            }
+
             try {
                 const products = await productCollections
                     .find(query)
                     .skip(skip)
                     .limit(limit)
-                    .sort({ createdAt: -1 })
+                    .sort(sortOptions)
                     .toArray();
 
-                const total = await productCollections.estimatedDocumentCount();
+                const total = await productCollections.countDocuments(query);
 
                 res.json({
                     products,
                     totalPages: Math.ceil(total / limit)
-                })
+                });
             } catch (err) {
                 res.status(500).json({ error: "Failed to fetch products" });
             }
