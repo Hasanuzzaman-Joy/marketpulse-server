@@ -5,7 +5,9 @@ const port = process.env.PORT || 5000;
 const cors = require("cors")
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const jwt = require("jsonwebtoken");
+const nodemailer = require("nodemailer");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+
 
 // Middlewares
 app.use(cors());
@@ -400,18 +402,29 @@ async function run() {
 
         // Sending users to DB
         app.post("/register", async (req, res) => {
-            const { name, email, photo } = req.body;
-            const users = {
-                name,
-                email,
-                photo,
-                role: "user",
-                createdAt: new Date(),
-                lastSignedIn: new Date()
+            try {
+                const { name, email, photo } = req.body;
+                const existingUser = await usersCollection.findOne({ email });
+
+                if (existingUser) {
+                    return res.status(400).send({ error: "User already exists" });
+                }
+
+                const newUser = {
+                    name,
+                    email,
+                    photo,
+                    role: "user",
+                    createdAt: new Date(),
+                    lastSignedIn: new Date()
+                };
+
+                const result = await usersCollection.insertOne(newUser);
+                res.status(201).send(result);
+            } catch (error) {
+                res.status(500).send({ error: "Registration failed" });
             }
-            const result = await usersCollection.insertOne(users);
-            res.send(result)
-        })
+        });
 
         // Apply to become a vendor
         app.post("/vendors/apply", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
@@ -559,27 +572,66 @@ async function run() {
             }
         });
 
+        // Contact form 
+        app.post("/contact", async (req, res) => {
+            const { name, email, message } = req.body;
+
+            try {
+                const transporter = nodemailer.createTransport({
+                    host: "smtp.gmail.com",
+                    port: 465,
+                    secure: true,
+                    auth: {
+                        user: process.env.EMAIL_USER,
+                        pass: process.env.EMAIL_PASS,
+                    },
+                });
+
+                // Email options
+                const mailOptions = {
+                    from: `"MarketPulse Contact" <${process.env.EMAIL_USER}>`,
+                    to: process.env.EMAIL_USER,
+                    subject: `MarketPulse Form Message from ${name}`,
+                    html: `
+        <h3>New Message from MarketPulse Contact Form</h3>
+        <p><strong>Name:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Message:</strong><br/> ${message}</p>
+      `,
+                };
+
+                // Send email
+                await transporter.sendMail(mailOptions);
+
+                res.status(200).json({ message: "Message sent successfully!" });
+            } catch (error) {
+                console.error("Error sending email:", error);
+                res.status(500).json({ error: "Failed to send message" });
+            }
+        });
+
         // =============================UPDATE API=============================
 
         // Updating Users Signin Time
-        app.patch("/register", async (req, res) => {
+        app.patch("/update-last-login", async (req, res) => {
             try {
-                const { email, lastSignedIn } = req.body;
-                if (!email || !lastSignedIn) {
-                    return res.status(400).send({ error: "Email and lastSignedIn are required" });
+                const { email } = req.body;
+                if (!email) {
+                    return res.status(400).send({ error: "Email is required" });
                 }
 
-                const filter = { email };
-                const updateDoc = { $set: { lastSignedIn: new Date(lastSignedIn) } };
-                const result = await usersCollection.updateOne(filter, updateDoc);
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: { lastSignedIn: new Date() } }
+                );
 
                 if (result.matchedCount === 0) {
-                    return res.status(404).send({ message: "User not found" });
+                    return res.status(404).send({ error: "User not found" });
                 }
 
-                res.send({ message: "Last signed in updated successfully", result });
+                res.send({ message: "Last login updated", result });
             } catch (error) {
-                res.status(500).send({ error: "Internal Server Error" });
+                res.status(500).send({ error: "Update failed" });
             }
         });
 
