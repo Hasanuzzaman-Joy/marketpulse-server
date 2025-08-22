@@ -30,6 +30,7 @@ async function run() {
         const usersCollection = client.db("usersDB").collection("users");
         const vendorsCollection = client.db("usersDB").collection("vendorApplications");
         const productCollections = client.db("usersDB").collection("products");
+        const cartCollections = client.db("usersDB").collection("cart");
         const adCollections = client.db("usersDB").collection("ad");
         const wishCollections = client.db("usersDB").collection("wishLists");
         const paymentCollection = client.db("usersDB").collection("payments");
@@ -246,6 +247,26 @@ async function run() {
                 res.send(advertisements);
             } catch (err) {
                 res.status(500).json({ error: "Failed to fetch advertisements" });
+            }
+        });
+
+        // Get Cart Products
+        app.get("/get-cart", verifyToken, verifyTokenEmail, async (req, res) => {
+            try {
+                const { email } = req.query;
+
+                if (!email) {
+                    return res.status(400).json({ message: "Email is required" });
+                }
+
+                // Fetch cart items for the user
+                const cartItems = await cartCollections
+                    .find({ buyerEmail: email })
+                    .toArray();
+
+                res.status(200).json(cartItems);
+            } catch (error) {
+                res.status(500).json({ message: "Internal Server Error" });
             }
         });
 
@@ -493,6 +514,42 @@ async function run() {
                 res.send(result);
             } catch (error) {
                 res.status(500).json({ message: "Server error" });
+            }
+        });
+
+        // Add To Cart Post API
+        app.post("/cart", verifyToken, verifyTokenEmail, async (req, res) => {
+            try {
+
+
+                const { productId, itemName, pricePerUnit, image, buyerEmail } = req.body;
+
+                // Check if product already exists
+                const existingItem = await cartCollections.findOne({ buyerEmail, productId });
+
+                if (existingItem) {
+                    // Update quantity if already in cart
+                    await cartCollections.updateOne(
+                        { _id: existingItem._id },
+                        { $inc: { quantity: 1 } }
+                    );
+                    return res.status(200).json({ message: "Cart updated successfully" });
+                } else {
+                    const newCartItem = {
+                        productId,
+                        itemName,
+                        pricePerUnit,
+                        image,
+                        buyerEmail,
+                        quantity: 1,
+                        createdAt: new Date(),
+                    };
+
+                    await cartCollections.insertOne(newCartItem);
+                    return res.status(201).json({ message: "Product added to cart" });
+                }
+            } catch (error) {
+                res.status(500).json({ message: "Internal Server Error" });
             }
         });
 
@@ -864,6 +921,24 @@ async function run() {
             }
         });
 
+        // Delete a product from Cart
+        app.delete("/delete-productCart/:itemId", verifyToken, verifyTokenEmail, async (req, res) => {
+            const { itemId } = req.params;
+            const { email } = req.query;
+
+            try {
+                const result = await cartCollections.deleteOne({
+                    _id: new ObjectId(itemId),
+                    buyerEmail: email,
+                });
+
+                res.json({ message: "Item removed successfully" });
+            } catch (error) {
+                res.status(500).json({ error: "Server error" });
+            }
+        });
+
+        // Delete a product from wishlist
         app.delete("/delete-wishlist/:id", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
             try {
                 const wishlistId = req.params.id;
