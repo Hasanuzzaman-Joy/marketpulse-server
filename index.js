@@ -895,6 +895,40 @@ async function run() {
             }
         });
 
+        // Update cart item quantity
+        app.patch("/cart/update/:itemId", verifyToken, verifyTokenEmail, async (req, res) => {
+            const { itemId } = req.params;
+            const { email, action } = req.query; 
+
+            if (!action || !["increase", "decrease"].includes(action)) {
+                return res.status(400).json({ message: "Invalid action. Use 'increase' or 'decrease'." });
+            }
+
+            try {
+                const cartItem = await cartCollections.findOne({ _id: new ObjectId(itemId), buyerEmail: email });
+
+                if (!cartItem) {
+                    return res.status(404).json({ message: "Item not found" });
+                }
+
+                // Prevent decreasing below 1
+                if (action === "decrease" && cartItem.quantity <= 1) {
+                    return res.status(400).json({ message: "Quantity cannot be less than 1" });
+                }
+
+                const increment = action === "increase" ? 1 : -1;
+
+                const result = await cartCollections.updateOne(
+                    { _id: new ObjectId(itemId), buyerEmail: email },
+                    { $inc: { quantity: increment } }
+                );
+
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({ error: "Server error" });
+            }
+        });
+
         // =============================DELETE API=============================
 
         // DELETE a product
