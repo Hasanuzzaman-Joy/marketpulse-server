@@ -187,7 +187,7 @@ async function run() {
     app.get(
       "/my-products",
       verifyToken,
-      verifyToken,
+      verifyTokenEmail,
       verifyRole("vendor"),
       async (req, res) => {
         const email = req.query.email;
@@ -437,35 +437,82 @@ async function run() {
             })
             .toArray();
 
-          // Fetch product data for each payment to send productName & marketName etc
+          // Process each payment to get order details
           const ordersWithProduct = await Promise.all(
             payments.map(async (payment) => {
-              let product;
-              try {
-                product = await productCollections.findOne({
-                  _id: new ObjectId(payment.productId),
-                });
-              } catch (err) {
-                // console.error("Invalid productId:", payment.productId);
-              }
+              // Handle single product payment
+              if (payment.productId) {
+                let product;
+                try {
+                  product = await productCollections.findOne({
+                    _id: new ObjectId(payment.productId),
+                  });
+                } catch (err) {
+                  // console.error("Invalid productId:", payment.productId);
+                }
 
-              return {
-                _id: payment._id,
-                product_id: payment.productId,
-                price: payment.price,
-                buyerName: payment.buyerName,
-                email: payment.email,
-                status: payment.status,
-                paidAt: payment.paidAt,
-                productName: product?.itemName || "Unknown",
-                marketName: product?.marketName || "Unknown",
-                productImage: product?.image || "N/A",
-              };
+                return {
+                  _id: payment._id,
+                  product_id: payment.productId,
+                  price: payment.price,
+                  buyerName: payment.buyerName,
+                  email: payment.buyerEmail,
+                  status: payment.status,
+                  paidAt: payment.paidAt,
+                  productName: product?.itemName || "Unknown",
+                  marketName: product?.marketName || "Unknown",
+                  productImage: product?.image || "N/A",
+                  type: "single",
+                };
+              }
+              // Handle multiple products payment
+              else if (payment.products && Array.isArray(payment.products)) {
+                // Process each product in the order
+                const productsWithDetails = await Promise.all(
+                  payment.products.map(async (productItem) => {
+                    let productDetails;
+                    try {
+                      productDetails = await productCollections.findOne({
+                        _id: new ObjectId(productItem.productId),
+                      });
+                    } catch (err) {
+                      // console.error("Invalid productId:", productItem.productId);
+                    }
+
+                    return {
+                      product_id: productItem.productId,
+                      price: productItem.price,
+                      quantity: productItem.quantity,
+                      productName: productDetails?.itemName || "Unknown",
+                      marketName: productDetails?.marketName || "Unknown",
+                      productImage: productDetails?.image || "N/A",
+                    };
+                  })
+                );
+
+                return {
+                  _id: payment._id,
+                  products: productsWithDetails,
+                  totalAmount: payment.totalAmount,
+                  buyerName: payment.buyerName,
+                  email: payment.buyerEmail,
+                  status: payment.status,
+                  paidAt: payment.paidAt,
+                  type: "multiple", 
+                };
+              } else {
+                return {
+                  _id: payment._id,
+                  error: "Invalid payment structure",
+                  rawData: payment,
+                };
+              }
             })
           );
 
           res.json(ordersWithProduct);
         } catch (error) {
+          console.error("Error fetching orders:", error);
           res.status(500).json({ error: "Internal Server Error" });
         }
       }
@@ -721,7 +768,7 @@ async function run() {
     );
 
     // Payment Intent
-    app.post("/create-payment-intent", verifyToken, async (req, res) => {
+    app.post("/create-payment-intent", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
       try {
         const { productId, price, buyerName, buyerEmail } = req.body;
 
@@ -751,9 +798,8 @@ async function run() {
         });
 
         // Return client secret for front-end payment confirmation
-        res.json(paymentIntent.client_secret);
+        res.json({ clientSecret: paymentIntent.client_secret });
       } catch (error) {
-        console.error("Payment Intent Error:", error);
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
@@ -793,6 +839,85 @@ async function run() {
       } catch (error) {
         console.error("POST /comments error:", error);
         res.status(500).json({ error: "Internal Server Error" });
+      }
+    });
+
+    // Cart Payment Intent
+    app.post('/create-payment-intent-cart', verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
+      const { items, buyerEmail, buyerName } = req.body;
+
+      // Validate the request
+      if (!items || !Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: 'A non-empty array of items is required.' });
+      }
+
+      try {
+        // Validate prices and stock on the server side
+        let totalAmount = 0;
+        let productInfo = [];
+
+        for (const item of items) {
+          // Fetch the latest product info from the DB
+          const product = await productCollections.findOne({ _id: new ObjectId(item.productId) });
+
+          if (!product) {
+            return res.status(404).json({ error: `Product ${item.productId} not found.` });
+          }
+
+          // CONVERT PRICE TO NUMBER BEFORE CALCULATION 
+          const productPrice = parseFloat(product.pricePerUnit);
+          const itemQuantity = parseInt(item.quantity);
+
+          if (isNaN(productPrice) || isNaN(itemQuantity)) {
+            return res.status(400).json({ error: `Invalid price or quantity for product ${product.itemName}` });
+          }
+
+          const itemTotal = productPrice * itemQuantity;
+          totalAmount += itemTotal;
+
+          // Push validated info
+          productInfo.push({
+            productId: item.productId,
+            quantity: itemQuantity,
+            price: productPrice,
+            name: product.itemName,
+            image: product.image
+          });
+        }
+
+        // Convert amount to cents 
+        const amount = Math.round(totalAmount * 100);
+        if (amount < 50) {
+          return res.status(400).json({ error: 'Order total must be at least $0.50.' });
+        }
+
+        // Create a Payment Intent with the order amount and currency
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card'],
+          metadata: {
+            buyerEmail: buyerEmail,
+            buyerName: buyerName,
+            productCount: productInfo.length.toString(), 
+          },
+        });
+
+        // Save the full order details to your database
+        await paymentCollection.insertOne({
+          buyerEmail: buyerEmail,
+          buyerName: buyerName,
+          products: productInfo,
+          totalAmount: totalAmount,
+          status: 'paid',
+          paidAt: new Date(),
+        });
+
+        res.status(200).json({ clientSecret: paymentIntent.client_secret });
+
+      } catch (error) {
+        console.error("Error in create-payment-intent-cart:", error);
+        res.status(500).json({ error: 'Internal server error. Could not create payment intent.' });
       }
     });
 
@@ -1201,7 +1326,7 @@ async function run() {
           if (!vendorApplication) {
             return res.status(404).json({ message: "Vendor application not found" });
           }
-          
+
           // Prevent changing status if already approved or rejected
           if (vendorApplication.vendor_status === "approved" || vendorApplication.vendor_status === "rejected") {
             return res.status(400).json({ message: `Cannot update. Vendor is already ${vendorApplication.vendor_status}` });
