@@ -498,7 +498,7 @@ async function run() {
                   email: payment.buyerEmail,
                   status: payment.status,
                   paidAt: payment.paidAt,
-                  type: "multiple", 
+                  type: "multiple",
                 };
               } else {
                 return {
@@ -899,7 +899,7 @@ async function run() {
           metadata: {
             buyerEmail: buyerEmail,
             buyerName: buyerName,
-            productCount: productInfo.length.toString(), 
+            productCount: productInfo.length.toString(),
           },
         });
 
@@ -916,7 +916,6 @@ async function run() {
         res.status(200).json({ clientSecret: paymentIntent.client_secret });
 
       } catch (error) {
-        console.error("Error in create-payment-intent-cart:", error);
         res.status(500).json({ error: 'Internal server error. Could not create payment intent.' });
       }
     });
@@ -1414,6 +1413,26 @@ async function run() {
         }
       }
     );
+
+    // Clear all products from Cart
+    app.delete('/clear-cart', verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
+      const { email } = req.query;
+
+      if (!email) {
+        return res.status(400).json({ error: 'Email is required.' });
+      }
+
+      try {
+        const result = await cartCollections.deleteMany({ buyerEmail: email });
+
+        res.status(200).json({
+          message: `Cleared ${result.deletedCount} items from cart`,
+          deletedCount: result.deletedCount
+        });
+      } catch (error) {
+        res.status(500).json({ error: 'Failed to clear cart' });
+      }
+    });
 
     // Delete a product from wishlist
     app.delete(
