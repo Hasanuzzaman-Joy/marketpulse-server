@@ -27,7 +27,9 @@ async function run() {
     // await client.connect();
 
     const usersCollection = client.db("usersDB").collection("users");
-    const vendorsCollection = client.db("usersDB").collection("vendorApplications");
+    const vendorsCollection = client
+      .db("usersDB")
+      .collection("vendorApplications");
     const productCollections = client.db("usersDB").collection("products");
     const cartCollections = client.db("usersDB").collection("cart");
     const adCollections = client.db("usersDB").collection("ad");
@@ -437,82 +439,69 @@ async function run() {
             })
             .toArray();
 
-          // Process each payment to get order details
-          const ordersWithProduct = await Promise.all(
+          // For each payment, fetch product details for each item
+          const ordersWithProducts = await Promise.all(
             payments.map(async (payment) => {
-              // Handle single product payment
-              if (payment.productId) {
-                let product;
-                try {
-                  product = await productCollections.findOne({
-                    _id: new ObjectId(payment.productId),
-                  });
-                } catch (err) {
-                  // console.error("Invalid productId:", payment.productId);
-                }
+              const itemsArray = Array.isArray(payment.items)
+                ? payment.items
+                : [];
 
+              if (itemsArray.length === 0) {
                 return {
                   _id: payment._id,
-                  product_id: payment.productId,
-                  price: payment.price,
-                  buyerName: payment.buyerName,
+                  buyer: payment.buyerName,
                   email: payment.buyerEmail,
                   status: payment.status,
                   paidAt: payment.paidAt,
-                  productName: product?.itemName || "Unknown",
-                  marketName: product?.marketName || "Unknown",
-                  productImage: product?.image || "N/A",
-                  type: "single",
                 };
               }
-              // Handle multiple products payment
-              else if (payment.products && Array.isArray(payment.products)) {
-                // Process each product in the order
-                const productsWithDetails = await Promise.all(
-                  payment.products.map(async (productItem) => {
-                    let productDetails;
-                    try {
+
+              // Process each item to fetch product details
+              const processedItems = await Promise.all(
+                itemsArray.map(async (item) => {
+                  let productDetails = {};
+                  try {
+                    if (item.productId) {
                       productDetails = await productCollections.findOne({
-                        _id: new ObjectId(productItem.productId),
+                        _id: new ObjectId(item.productId),
                       });
-                    } catch (err) {
-                      // console.error("Invalid productId:", productItem.productId);
                     }
+                  } catch (err) {
+                    console.error("Invalid productId:", item.productId);
+                  }
 
-                    return {
-                      product_id: productItem.productId,
-                      price: productItem.price,
-                      quantity: productItem.quantity,
-                      productName: productDetails?.itemName || "Unknown",
-                      marketName: productDetails?.marketName || "Unknown",
-                      productImage: productDetails?.image || "N/A",
-                    };
-                  })
-                );
+                  return {
+                    product_id: item.productId,
+                    price: parseFloat(item.price || item.pricePerUnit || 0),
+                    quantity: item.quantity || 1,
+                    productName:
+                      productDetails?.itemName || item.itemName || "Unknown",
+                    marketName: productDetails?.marketName || "Unknown",
+                    productImage: productDetails?.image || item.image || "N/A",
+                  };
+                })
+              );
 
-                return {
-                  _id: payment._id,
-                  products: productsWithDetails,
-                  totalAmount: payment.totalAmount,
-                  buyerName: payment.buyerName,
-                  email: payment.buyerEmail,
-                  status: payment.status,
-                  paidAt: payment.paidAt,
-                  type: "multiple",
-                };
-              } else {
-                return {
-                  _id: payment._id,
-                  error: "Invalid payment structure",
-                  rawData: payment,
-                };
-              }
+              const totalAmount = processedItems.reduce(
+                (sum, item) => sum + item.price * item.quantity,
+                0
+              );
+
+              return {
+                _id: payment._id,
+                items: processedItems,
+                totalAmount,
+                buyer: payment.buyerName,
+                email: payment.buyerEmail,
+                status: payment.status,
+                paidAt: payment.paidAt,
+                type: processedItems.length > 1 ? "multiple" : "single",
+              };
             })
           );
 
-          res.json(ordersWithProduct);
+          res.json(ordersWithProducts);
         } catch (error) {
-          console.error("Error fetching orders:", error);
           res.status(500).json({ error: "Internal Server Error" });
         }
       }
@@ -529,19 +518,25 @@ async function run() {
     });
 
     // Get vendor applications - admin only
-    app.get("/vendor-requests", verifyToken, verifyTokenEmail, verifyRole("admin"), async (req, res) => {
-      try {
-        console.log(req.query)
-        const vendorRequests = await vendorsCollection
-          .find({})
-          .sort({ createdAt: -1 })
-          .toArray();
+    app.get(
+      "/vendor-requests",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("admin"),
+      async (req, res) => {
+        try {
+          console.log(req.query);
+          const vendorRequests = await vendorsCollection
+            .find({})
+            .sort({ createdAt: -1 })
+            .toArray();
 
-        res.status(200).json(vendorRequests);
-      } catch (err) {
-        res.status(500).json({ message: "Internal server error" });
+          res.status(200).json(vendorRequests);
+        } catch (err) {
+          res.status(500).json({ message: "Internal server error" });
+        }
       }
-    });
+    );
 
     // =============================POST API=============================
 
@@ -735,7 +730,7 @@ async function run() {
 
           // Fetch cart items for this user
           const cartItems = await cartCollections
-            .find({ buyerEmail: customerEmail })
+            .find({ buyerEmail })
             .toArray();
 
           if (!cartItems || cartItems.length === 0) {
@@ -752,7 +747,7 @@ async function run() {
             buyerName,
             buyerEmail,
             cartItems,
-            price,
+            price: totalPrice,
             status: "pending",
             createdAt: new Date(),
           };
@@ -766,43 +761,6 @@ async function run() {
         }
       }
     );
-
-    // Payment Intent
-    app.post("/create-payment-intent", verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
-      try {
-        const { productId, price, buyerName, buyerEmail } = req.body;
-
-        if (!price || isNaN(price)) {
-          return res.status(400).json({ error: "Invalid price" });
-        }
-
-        // Create Stripe PaymentIntent
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: Math.round(price * 100),
-          currency: "usd",
-          receipt_email: buyerEmail,
-          metadata: {
-            productId,
-            buyerName,
-          },
-        });
-
-        // Save payment info to MongoDB
-        await paymentCollection.insertOne({
-          productId,
-          price,
-          buyerName,
-          buyerEmail,
-          status: "paid",
-          paidAt: new Date(),
-        });
-
-        // Return client secret for front-end payment confirmation
-        res.json({ clientSecret: paymentIntent.client_secret });
-      } catch (error) {
-        res.status(500).json({ error: "Internal Server Error" });
-      }
-    });
 
     // POST Comment API
     app.post("/comments", verifyToken, verifyTokenEmail, async (req, res) => {
@@ -842,83 +800,161 @@ async function run() {
       }
     });
 
-    // Cart Payment Intent
-    app.post('/create-payment-intent-cart', verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
-      const { items, buyerEmail, buyerName } = req.body;
+    // Payment Intent
+    app.post(
+      "/create-payment-intent",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("user"),
+      async (req, res) => {
+        try {
+          const { productId, price, buyerName, buyerEmail } = req.body;
 
-      // Validate the request
-      if (!items || !Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'A non-empty array of items is required.' });
-      }
-
-      try {
-        // Validate prices and stock on the server side
-        let totalAmount = 0;
-        let productInfo = [];
-
-        for (const item of items) {
-          // Fetch the latest product info from the DB
-          const product = await productCollections.findOne({ _id: new ObjectId(item.productId) });
-
-          if (!product) {
-            return res.status(404).json({ error: `Product ${item.productId} not found.` });
+          if (!price || isNaN(price)) {
+            return res.status(400).json({ error: "Invalid price" });
           }
 
-          // CONVERT PRICE TO NUMBER BEFORE CALCULATION 
-          const productPrice = parseFloat(product.pricePerUnit);
-          const itemQuantity = parseInt(item.quantity);
-
-          if (isNaN(productPrice) || isNaN(itemQuantity)) {
-            return res.status(400).json({ error: `Invalid price or quantity for product ${product.itemName}` });
-          }
-
-          const itemTotal = productPrice * itemQuantity;
-          totalAmount += itemTotal;
-
-          // Push validated info
-          productInfo.push({
-            productId: item.productId,
-            quantity: itemQuantity,
-            price: productPrice,
-            name: product.itemName,
-            image: product.image
+          // Create Stripe PaymentIntent
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: Math.round(price * 100),
+            currency: "usd",
+            payment_method_types: ["card"],
+            metadata: {
+              productId,
+              buyerName,
+              buyerEmail,
+            },
           });
+
+          // Return client secret for front-end payment confirmation
+          res.json({ clientSecret: paymentIntent.client_secret });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
         }
-
-        // Convert amount to cents 
-        const amount = Math.round(totalAmount * 100);
-        if (amount < 50) {
-          return res.status(400).json({ error: 'Order total must be at least $0.50.' });
-        }
-
-        // Create a Payment Intent with the order amount and currency
-        const paymentIntent = await stripe.paymentIntents.create({
-          amount: amount,
-          currency: 'usd',
-          payment_method_types: ['card'],
-          metadata: {
-            buyerEmail: buyerEmail,
-            buyerName: buyerName,
-            productCount: productInfo.length.toString(),
-          },
-        });
-
-        // Save the full order details to your database
-        await paymentCollection.insertOne({
-          buyerEmail: buyerEmail,
-          buyerName: buyerName,
-          products: productInfo,
-          totalAmount: totalAmount,
-          status: 'paid',
-          paidAt: new Date(),
-        });
-
-        res.status(200).json({ clientSecret: paymentIntent.client_secret });
-
-      } catch (error) {
-        res.status(500).json({ error: 'Internal server error. Could not create payment intent.' });
       }
-    });
+    );
+
+    // Cart Payment Intent
+    app.post(
+      "/create-payment-intent-cart",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("user"),
+      async (req, res) => {
+        const { items, buyerEmail, buyerName } = req.body;
+
+        // Validate the request
+        if (!items || !Array.isArray(items) || items.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "A non-empty array of items is required." });
+        }
+
+        try {
+          // Validate prices and stock on the server side
+          let totalAmount = 0;
+          let productInfo = [];
+
+          for (const item of items) {
+            // Fetch the latest product info from the DB
+            const product = await productCollections.findOne({
+              _id: new ObjectId(item.productId),
+            });
+
+            if (!product) {
+              return res
+                .status(404)
+                .json({ error: `Product ${item.productId} not found.` });
+            }
+
+            // CONVERT PRICE TO NUMBER BEFORE CALCULATION
+            const productPrice = parseFloat(product.pricePerUnit);
+            const itemQuantity = parseInt(item.quantity);
+
+            if (isNaN(productPrice) || isNaN(itemQuantity)) {
+              return res
+                .status(400)
+                .json({
+                  error: `Invalid price or quantity for product ${product.itemName}`,
+                });
+            }
+
+            const itemTotal = productPrice * itemQuantity;
+            totalAmount += itemTotal;
+
+            // Push validated info
+            productInfo.push({
+              productId: item.productId,
+              quantity: itemQuantity,
+              price: productPrice,
+              name: product.itemName,
+              image: product.image,
+            });
+          }
+
+          // Convert amount to cents
+          const amount = Math.round(totalAmount * 100);
+          if (amount < 50) {
+            return res
+              .status(400)
+              .json({ error: "Order total must be at least $0.50." });
+          }
+
+          // Create a Payment Intent with the order amount and currency
+          const paymentIntent = await stripe.paymentIntents.create({
+            amount: amount,
+            currency: "usd",
+            payment_method_types: ["card"],
+            metadata: {
+              buyerEmail: buyerEmail,
+              buyerName: buyerName,
+              productCount: productInfo.length.toString(),
+            },
+          });
+
+          res.status(200).json({ clientSecret: paymentIntent.client_secret });
+        } catch (error) {
+          res
+            .status(500)
+            .json({
+              error: "Internal server error. Could not create payment intent.",
+            });
+        }
+      }
+    );
+
+    // Save Payment Info
+    app.post(
+      "/save-payment",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("user"),
+      async (req, res) => {
+        try {
+          const paymentData = req.body;
+          console.log(req.body);
+
+          // must include paymentIntentId
+          if (!paymentData.paymentIntentId) {
+            return res.status(400).json({ error: "Missing paymentIntentId" });
+          }
+
+          const doc = {
+            ...paymentData,
+            paidAt: new Date(),
+            status: "paid",
+          };
+
+          console.log(doc);
+
+          await paymentCollection.insertOne(doc);
+
+          res.status(200).json({ message: "Payment saved successfully" });
+        } catch (error) {
+          res.status(500).json({ error: "Failed to save payment" });
+        }
+      }
+    );
 
     // Contact form
     app.post("/contact", async (req, res) => {
@@ -989,7 +1025,7 @@ async function run() {
         const { email } = req.query;
         const { name, photo } = req.body;
 
-        const updateData = { name, photo }
+        const updateData = { name, photo };
 
         const result = await usersCollection.updateOne(
           { email },
@@ -1319,35 +1355,45 @@ async function run() {
           }
 
           // Find the vendor application first
-          const vendorApplication = await vendorsCollection
-            .findOne({ _id: new ObjectId(vendorId) });
+          const vendorApplication = await vendorsCollection.findOne({
+            _id: new ObjectId(vendorId),
+          });
 
           if (!vendorApplication) {
-            return res.status(404).json({ message: "Vendor application not found" });
+            return res
+              .status(404)
+              .json({ message: "Vendor application not found" });
           }
 
           // Prevent changing status if already approved or rejected
-          if (vendorApplication.vendor_status === "approved" || vendorApplication.vendor_status === "rejected") {
-            return res.status(400).json({ message: `Cannot update. Vendor is already ${vendorApplication.vendor_status}` });
+          if (
+            vendorApplication.vendor_status === "approved" ||
+            vendorApplication.vendor_status === "rejected"
+          ) {
+            return res
+              .status(400)
+              .json({
+                message: `Cannot update. Vendor is already ${vendorApplication.vendor_status}`,
+              });
           }
 
           // Update vendor_status in vendorApplications
-          await vendorsCollection
-            .updateOne(
-              { _id: new ObjectId(vendorId) },
-              { $set: { vendor_status: status } }
-            );
+          await vendorsCollection.updateOne(
+            { _id: new ObjectId(vendorId) },
+            { $set: { vendor_status: status } }
+          );
 
           // If approved, update user's role in the users collection
           if (status === "approved") {
-            await usersCollection
-              .updateOne(
-                { email: vendorApplication.email },
-                { $set: { role: "vendor" } }
-              );
+            await usersCollection.updateOne(
+              { email: vendorApplication.email },
+              { $set: { role: "vendor" } }
+            );
           }
 
-          res.status(200).json({ message: "Vendor status updated successfully" });
+          res
+            .status(200)
+            .json({ message: "Vendor status updated successfully" });
         } catch (err) {
           res.status(500).json({ message: "Internal server error" });
         }
@@ -1415,24 +1461,32 @@ async function run() {
     );
 
     // Clear all products from Cart
-    app.delete('/clear-cart', verifyToken, verifyTokenEmail, verifyRole("user"), async (req, res) => {
-      const { email } = req.query;
+    app.delete(
+      "/clear-cart",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("user"),
+      async (req, res) => {
+        const { email } = req.query;
 
-      if (!email) {
-        return res.status(400).json({ error: 'Email is required.' });
+        if (!email) {
+          return res.status(400).json({ error: "Email is required." });
+        }
+
+        try {
+          const result = await cartCollections.deleteMany({
+            buyerEmail: email,
+          });
+
+          res.status(200).json({
+            message: `Cleared ${result.deletedCount} items from cart`,
+            deletedCount: result.deletedCount,
+          });
+        } catch (error) {
+          res.status(500).json({ error: "Failed to clear cart" });
+        }
       }
-
-      try {
-        const result = await cartCollections.deleteMany({ buyerEmail: email });
-
-        res.status(200).json({
-          message: `Cleared ${result.deletedCount} items from cart`,
-          deletedCount: result.deletedCount
-        });
-      } catch (error) {
-        res.status(500).json({ error: 'Failed to clear cart' });
-      }
-    });
+    );
 
     // Delete a product from wishlist
     app.delete(
