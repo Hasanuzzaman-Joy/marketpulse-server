@@ -357,7 +357,7 @@ async function run() {
 
         res.json(comments);
       } catch (error) {
-        console.error("GET /comments error:", error);
+        // console.error("GET /comments error:", error);
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
@@ -367,7 +367,7 @@ async function run() {
       "/admin/orders",
       verifyToken,
       verifyTokenEmail,
-      verifyRole("admin"),
+      verifyRole("admin", "vendor"),
       async (req, res) => {
         try {
           const page = parseInt(req.query.page) || 1;
@@ -385,32 +385,40 @@ async function run() {
             status: "paid",
           });
 
-          const orders = await Promise.all(
-            payments.map(async (payment) => {
+          // Build order details with products
+          const orders = [];
+
+          for (const payment of payments) {
+            for (const item of payment.items) {
               const productObjectId =
-                typeof payment.productId === "string"
-                  ? new ObjectId(payment.productId)
-                  : payment.productId;
+                typeof item.productId === "string"
+                  ? new ObjectId(item.productId)
+                  : item.productId;
 
               const product = await productCollections.findOne({
                 _id: productObjectId,
               });
 
-              return {
-                _id: payment._id,
-                price: payment.price,
+              orders.push({
+                _id: product._id,
+                orderId: payment._id,
+                paymentIntentId: payment.paymentIntentId,
+                price: item.price || item.pricePerUnit || payment.amount,
                 buyerName: payment.buyerName,
                 buyerEmail: payment.buyerEmail,
+                buyerAddress: payment.buyerAddress,
                 status: payment.status,
                 paidAt: payment.paidAt,
-                productId: payment.productId,
-                productName: product?.itemName || "Unknown Product",
+                productId: item.productId,
+                productName: product?.itemName || item.itemName || "Unknown Product",
                 vendorEmail: product?.vendorEmail || "N/A",
                 vendorName: product?.vendorName || "N/A",
-                productImage: product?.image || "",
-              };
-            })
-          );
+                productImage: product?.image || item.image || "",
+                marketName: product?.marketName || "Unknown Market",
+                quantity: item.quantity || 1,
+              });
+            }
+          }
 
           res.json({
             orders,
@@ -467,7 +475,7 @@ async function run() {
                       });
                     }
                   } catch (err) {
-                    console.error("Invalid productId:", item.productId);
+                    // console.error("Invalid productId:", item.productId);
                   }
 
                   return {
@@ -525,7 +533,6 @@ async function run() {
       verifyRole("admin"),
       async (req, res) => {
         try {
-          console.log(req.query);
           const vendorRequests = await vendorsCollection
             .find({})
             .sort({ createdAt: -1 })
@@ -795,7 +802,7 @@ async function run() {
           ...newComment,
         });
       } catch (error) {
-        console.error("POST /comments error:", error);
+        // console.error("POST /comments error:", error);
         res.status(500).json({ error: "Internal Server Error" });
       }
     });
@@ -932,7 +939,6 @@ async function run() {
       async (req, res) => {
         try {
           const paymentData = req.body;
-          console.log(req.body);
 
           // must include paymentIntentId
           if (!paymentData.paymentIntentId) {
@@ -944,8 +950,6 @@ async function run() {
             paidAt: new Date(),
             status: "paid",
           };
-
-          console.log(doc);
 
           await paymentCollection.insertOne(doc);
 
@@ -989,7 +993,7 @@ async function run() {
 
         res.status(200).json({ message: "Message sent successfully!" });
       } catch (error) {
-        console.error("Error sending email:", error);
+        // console.error("Error sending email:", error);
         res.status(500).json({ error: "Failed to send message" });
       }
     });
