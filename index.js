@@ -367,7 +367,7 @@ async function run() {
       "/admin/orders",
       verifyToken,
       verifyTokenEmail,
-      verifyRole("admin", "vendor"),
+      verifyRole("admin"),
       async (req, res) => {
         try {
           const page = parseInt(req.query.page) || 1;
@@ -410,7 +410,8 @@ async function run() {
                 status: payment.status,
                 paidAt: payment.paidAt,
                 productId: item.productId,
-                productName: product?.itemName || item.itemName || "Unknown Product",
+                productName:
+                  product?.itemName || item.itemName || "Unknown Product",
                 vendorEmail: product?.vendorEmail || "N/A",
                 vendorName: product?.vendorName || "N/A",
                 productImage: product?.image || item.image || "",
@@ -422,6 +423,78 @@ async function run() {
 
           res.json({
             orders,
+            totalPages: Math.ceil(totalOrders / limit),
+          });
+        } catch (error) {
+          res.status(500).json({ error: "Internal Server Error" });
+        }
+      }
+    );
+
+    // Get orders for vendors
+    app.get(
+      "/vendor/orders",
+      verifyToken,
+      verifyTokenEmail,
+      verifyRole("vendor"),
+      async (req, res) => {
+        try {
+          const vendorEmail = req.query.email;
+          const page = parseInt(req.query.page) || 1;
+          const limit = parseInt(req.query.limit) || 7;
+          const skip = (page - 1) * limit;
+
+          // Fetch all paid payments
+          const payments = await paymentCollection
+            .find({ status: "paid" })
+            .toArray();
+
+          // Build orders array only for this vendor
+          let orders = [];
+
+          for (const payment of payments) {
+            for (const item of payment.items) {
+              const productObjectId =
+                typeof item.productId === "string"
+                  ? new ObjectId(item.productId)
+                  : item.productId;
+
+              const product = await productCollections.findOne({
+                _id: productObjectId,
+              });
+
+              // Check if this product belongs to this vendor
+              if (!product || product.vendorEmail !== vendorEmail) continue;
+
+              // Push vendor-specific order
+              orders.push({
+                _id: `${payment._id}-${item._id}`,
+                orderId: payment._id,
+                paymentIntentId: payment.paymentIntentId,
+                price: item.price || item.pricePerUnit || payment.amount,
+                buyerName: payment.buyerName,
+                buyerEmail: payment.buyerEmail,
+                buyerAddress: payment.buyerAddress,
+                status: payment.status,
+                paidAt: payment.paidAt,
+                productId: item.productId,
+                productName:
+                  product.itemName || item.itemName || "Unknown Product",
+                vendorEmail: product.vendorEmail,
+                vendorName: product.vendorName || "N/A",
+                productImage: product.image || item.image || "",
+                marketName: product.marketName || "Unknown Market",
+                quantity: item.quantity || 1,
+              });
+            }
+          }
+
+          // Pagination
+          const totalOrders = orders.length;
+          const paginatedOrders = orders.slice(skip, skip + limit);
+
+          res.json({
+            orders: paginatedOrders,
             totalPages: Math.ceil(totalOrders / limit),
           });
         } catch (error) {
@@ -879,11 +952,9 @@ async function run() {
             const itemQuantity = parseInt(item.quantity);
 
             if (isNaN(productPrice) || isNaN(itemQuantity)) {
-              return res
-                .status(400)
-                .json({
-                  error: `Invalid price or quantity for product ${product.itemName}`,
-                });
+              return res.status(400).json({
+                error: `Invalid price or quantity for product ${product.itemName}`,
+              });
             }
 
             const itemTotal = productPrice * itemQuantity;
@@ -921,11 +992,9 @@ async function run() {
 
           res.status(200).json({ clientSecret: paymentIntent.client_secret });
         } catch (error) {
-          res
-            .status(500)
-            .json({
-              error: "Internal server error. Could not create payment intent.",
-            });
+          res.status(500).json({
+            error: "Internal server error. Could not create payment intent.",
+          });
         }
       }
     );
@@ -1374,11 +1443,9 @@ async function run() {
             vendorApplication.vendor_status === "approved" ||
             vendorApplication.vendor_status === "rejected"
           ) {
-            return res
-              .status(400)
-              .json({
-                message: `Cannot update. Vendor is already ${vendorApplication.vendor_status}`,
-              });
+            return res.status(400).json({
+              message: `Cannot update. Vendor is already ${vendorApplication.vendor_status}`,
+            });
           }
 
           // Update vendor_status in vendorApplications
